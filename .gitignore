@@ -1,0 +1,16 @@
+# --- Gradle 本地缓存/构建产物（永不提交） ---
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- IDE ---
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# --- 系统/编辑器 ---
+.DS_Store
+*.class

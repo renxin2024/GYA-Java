@@ -1,1 +1,0 @@
-rootProject.name = "c02-function-calling"

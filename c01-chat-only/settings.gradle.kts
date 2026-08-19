@@ -1,1 +1,0 @@
-rootProject.name = "c01-chat-only"
