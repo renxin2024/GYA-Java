@@ -1,14 +1,26 @@
 # C02 Java 版：Function Calling 第一性原理
 
-GYA 系列第 2 篇的 Java 21 等价实现。Python 版见 [GYA/c02-function-calling](https://github.com/renxin2024/GYA/tree/main/c02-function-calling)。
+GYA 系列第 2 篇的 Java 21 + Gradle 实现。Python 版见 [GYA/c02-function-calling](https://github.com/renxin2024/GYA/tree/main/c02-function-calling)。
 
-## 运行（JDK 21，单文件，零依赖）
+## 技术栈
+
+| 项 | 版本 |
+|----|------|
+| JDK | 21（LTS） |
+| 构建 | Gradle 8.x（`application` 插件，`gradle run` 直接跑） |
+| JSON | Jackson（`jackson-databind`，build.gradle.kts 声明，自动拉取） |
+
+## 运行
 
 ```bash
-cd java
 export DEEPSEEK_API_KEY=sk-你的key
-java Main.java
+gradle run
 ```
+
+首次运行 Gradle 会自动下载依赖（需联网）。Gradle 未安装时：
+- macOS: `brew install gradle`
+- Ubuntu/Debian: `sudo apt install gradle`
+- Windows: 从 https://gradle.org/install 安装
 
 ## 预期输出
 
@@ -23,18 +35,25 @@ java Main.java
 
 完整演示了「模型只说、代码做」的闭环：声明工具 → 模型输出 tool_calls → 调用方解析执行 → 回喂 → 模型生成最终回答。
 
-## Java 版特有的三个坑（正文提到过的机制约束）
+## 工程结构
 
-1. **`arguments` 是字符串形态的 JSON**：API 返回 `"arguments": "{\"city\": \"北京\"}"`（转义字符串），要先 unescape 再取字段。
-2. **tool 消息必须回显 assistant.tool_calls**：直接拼一条 `role=tool` API 会 400 报错，必须先带 assistant 的 tool_calls 记录。
-3. **arguments 嵌入外层 JSON 要二次转义**：回喂时 arguments 作为字符串值，内部引号需转义（`toJsonString`）。
+```
+c02-function-calling/
+├── settings.gradle.kts          # 工程名
+├── build.gradle.kts             # application 插件 + Jackson 依赖 + Java 21 toolchain
+└── src/main/java/com/renxin/gya/c02/
+    └── Main.java                # 完整闭环主程序
+```
 
-生产环境这些都交给 Jackson/Gson；这里刻意手写是为了看清机制。
+## 工程结构说明
+
+标准 Gradle 工程（`application` 插件 + Java 21 toolchain + Jackson 依赖），`gradle run` 一键运行。与早期「单文件零依赖」演示相比，用 Jackson 处理 JSON 让代码只关心业务逻辑——这也是正文想传达的：**生产环境永远用 JSON 库，别手写解析**。
 
 ## 常见坑
 
 | 症状 | 原因 | 解法 |
 |------|------|------|
-| `java: not found` | 未装 JDK 21 | 安装 Temurin/OpenJDK 21 |
-| HTTP 400 `role 'tool'` | 回喂时少了 assistant.tool_calls | 按正文消息序列拼完整 |
-| city 为空 | 没对 arguments 做 unescape | 先反转义再解析 |
+| `gradle: command not found` | 未装 Gradle | 按上文安装 |
+| `JAVA_HOME` 或 toolchain 报错 | JDK 不是 21 | `java -version` 确认 21+ |
+| 401 `Invalid API key` | Key 未设置 | `export DEEPSEEK_API_KEY=sk-...` |
+| HTTP 400 `role 'tool'` | 回喂缺 assistant.tool_calls | 按正文消息序列拼完整 |

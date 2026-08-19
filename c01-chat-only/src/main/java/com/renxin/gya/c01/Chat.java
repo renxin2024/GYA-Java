@@ -1,23 +1,27 @@
+package com.renxin.gya.c01;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.ArrayList;
 import java.util.Scanner;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * C01 演示（Java 21 版）：一个只会说话的模型（命令行聊天）
+ * C01 演示（Java 21 + Gradle）：一个只会说话的模型（命令行聊天）
  *
  * 启动后你就能和模型对话——它说的每句话，底层都是一次
  * "给定前文 token，预测下一个 token" 的重复。
  *
- * 用法（JDK 21，单文件运行，无需 Maven/Jar）：
+ * 运行：
  *   export DEEPSEEK_API_KEY=sk-xxx
- *   java Chat.java
+ *   gradle run
  *
- * 依赖：仅 JDK 21 标准库（java.net.http）。
+ * 依赖：JDK 21 + Jackson（build.gradle.kts 声明，Gradle 自动拉取）。
  */
 public class Chat {
 
@@ -25,35 +29,27 @@ public class Chat {
     static final String API_KEY = System.getenv().getOrDefault("DEEPSEEK_API_KEY", "");
     static final String MODEL = System.getenv().getOrDefault("LLM_MODEL", "deepseek-v4-flash");
 
-    /** 简易历史：保存 {role, content} 对。 */
-    static final ArrayList<String> HISTORY = new ArrayList<>();  // 每项是 "role\tcontent"
+    static final ObjectMapper JSON = new ObjectMapper();
+
+    /** 对话历史（每项 {role, content}）。 */
+    static final ArrayNode HISTORY = JSON.createArrayNode();
 
     /** 把整个对话历史发给模型，返回它补全出来的下一个回复。 */
     static String ask(String userText) throws Exception {
-        HISTORY.add("user\t" + userText);
+        ObjectNode userMsg = HISTORY.addObject();
+        userMsg.put("role", "user");
+        userMsg.put("content", userText);
 
-        // 拼 messages 数组（极简字符串拼接，不用 JSON 库）
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < HISTORY.size(); i++) {
-            String[] parts = HISTORY.get(i).split("\t", 2);
-            if (i > 0) sb.append(",");
-            sb.append("{\"role\":\"")
-              .append(parts[0])
-              .append("\",\"content\":\"")
-              .append(escape(parts[1]))
-              .append("\"}");
-        }
-        sb.append("]");
-
-        String payload = """
-                {"model": "%s", "messages": %s, "stream": false}
-                """.formatted(MODEL, sb);
+        ObjectNode payload = JSON.createObjectNode();
+        payload.put("model", MODEL);
+        payload.set("messages", HISTORY);
+        payload.put("stream", false);
 
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(API_URL))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + API_KEY)
-                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
                 .build();
 
         HttpResponse<String> resp = HttpClient.newHttpClient().send(req,
@@ -62,21 +58,12 @@ public class Chat {
             throw new RuntimeException("HTTP " + resp.statusCode() + ": " + resp.body());
         }
 
-        String reply = jsonString(resp.body(), "content");
-        HISTORY.add("assistant\t" + reply);
+        JsonNode root = JSON.readTree(resp.body());
+        String reply = root.path("choices").path(0).path("message").path("content").asText();
+        ObjectNode assistantMsg = HISTORY.addObject();
+        assistantMsg.put("role", "assistant");
+        assistantMsg.put("content", reply);
         return reply;
-    }
-
-    /** 极简转义：内容里的引号/反斜杠（生产用 Jackson/Gson）。 */
-    static String escape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    /** 提取 JSON 里第一个字符串字段的值。 */
-    static String jsonString(String json, String key) {
-        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")
-                .matcher(json);
-        return m.find() ? m.group(1) : "";
     }
 
     public static void main(String[] args) throws Exception {

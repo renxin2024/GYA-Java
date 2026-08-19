@@ -1,6 +1,6 @@
 # GYA-Java — Get Your Agent（Java 版）
 
-**GYA（Get Your Agent）** 系列文章的 **Java 21 版**配套代码仓库。
+**GYA（Get Your Agent）** 系列文章的 **Java 21 + Gradle 版**配套代码仓库。
 
 ## 这个仓库是什么
 
@@ -13,18 +13,23 @@
 
 ## 版本要求
 
-- **JDK 21（LTS）**：`java -version` 显示 `21.0.x`
-  - macOS: `brew install openjdk@21`
-  - Ubuntu/Debian: `sudo apt install openjdk-21-jdk-headless`
-  - Windows: [Adoptium](https://adoptium.net) 下载 21
-- 所有演示**零依赖、单文件运行**（JDK 自带 `java.net.http` 发请求；JSON 字段用极简正则提取，生产环境请换 Jackson/Gson）
+| 项 | 要求 |
+|----|------|
+| JDK | 21（LTS）—— `java -version` 显示 `21.0.x` |
+| 构建 | Gradle 8.x —— 每个 demo 是独立 Gradle 工程，`gradle run` 直接运行 |
+| JSON | Jackson（`jackson-databind`，build.gradle.kts 声明，Gradle 自动拉取） |
+
+安装参考：
+- macOS: `brew install openjdk@21 gradle`
+- Ubuntu/Debian: `sudo apt install openjdk-21-jdk-headless gradle`
+- Windows: [Adoptium](https://adoptium.net)（JDK 21）+ [Gradle](https://gradle.org/install)（zip 解压即用）
 
 ## 目录导航
 
 | 目录 | 对应文章 | 运行方式 | 状态 |
 |------|---------|---------|------|
-| `c01-chat-only/` | 01 只会说话的模型 | `java Chat.java` | ✅ 可运行 |
-| `c02-function-calling/` | 02 Function Calling 第一性原理 | `java Main.java` | ✅ 可运行 |
+| `c01-chat-only/` | 01 只会说话的模型 | `gradle run`（交互式聊天） | ✅ 可运行 |
+| `c02-function-calling/` | 02 Function Calling 第一性原理 | `gradle run` | ✅ 可运行 |
 | `c03-model-training/` | 03 模型怎么被训出来的 | （规划中） | ⏳ |
 | `c04-tool-registry/` | 04 工具注册表与 ToolResponse | （规划中） | ⏳ |
 | ... | ... | ... | ... |
@@ -35,17 +40,20 @@
 git clone git@github.com:renxin2024/GYA-Java.git
 cd GYA-Java/c01-chat-only
 export DEEPSEEK_API_KEY=sk-你的key   # https://platform.deepseek.com 获取
-java Chat.java
+gradle run
 ```
 
 ## 每篇目录内约定
 
 ```
-c0X-xxx/
-  java/
-    Xxx.java   # 单文件、零依赖、git clone 即跑
-  README.md    # 前置环境 / 预期输出 / 常见坑
+c0X-xxx/                  # 独立 Gradle 工程
+├── settings.gradle.kts
+├── build.gradle.kts      # application 插件 + Jackson 依赖 + Java 21 toolchain
+└── src/main/java/
+    └── .../Xxx.java      # 主程序（包结构 + 正式 JSON 库）
 ```
+
+交互式 demo（如 C01 聊天）在 build.gradle.kts 里加了 `standardInput = System.in`，确保 `gradle run` 能接收终端输入。
 
 ## 许可
 
