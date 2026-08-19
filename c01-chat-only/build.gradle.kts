@@ -2,10 +2,13 @@ plugins {
     application
 }
 
-group = "com.renxin.gya"
+group = "cn.renxinblog"
 version = "1.0.0"
 
 repositories {
+    // 国内镜像源（阿里云 Maven 镜像，加速依赖下载；无需科学上网）
+    maven { url = uri("https://maven.aliyun.com/repository/public") }
+    maven { url = uri("https://maven.aliyun.com/repository/central") }
     mavenCentral()
 }
 
@@ -14,7 +17,7 @@ dependencies {
 }
 
 application {
-    mainClass = "com.renxin.gya.c01.Chat"
+    mainClass = "cn.renxinblog.c01.Chat"
 }
 
 // 让 gradle run 把终端 stdin 转发给 Java 进程（否则管道输入会丢失）

@@ -7,20 +7,18 @@ GYA 系列第 1 篇的 Java 21 + Gradle 实现。Python 版见 [GYA/c01-chat-onl
 | 项 | 版本 |
 |----|------|
 | JDK | 21（LTS） |
-| 构建 | Gradle 8.x（`application` 插件，`gradle run` 直接跑） |
-| JSON | Jackson（`jackson-databind`，build.gradle.kts 声明，自动拉取） |
+| 构建 | Gradle Wrapper 8.14.2（`./gradlew run`，无需预装 Gradle） |
+| 包名 | `cn.renxinblog.c01` |
+| JSON | Jackson（`jackson-databind`，走阿里云镜像下载） |
 
 ## 运行
 
 ```bash
 export DEEPSEEK_API_KEY=sk-你的key
-gradle run
+./gradlew run
 ```
 
-首次运行 Gradle 会自动下载依赖（需联网）。Gradle 未安装时：
-- macOS: `brew install gradle`
-- Ubuntu/Debian: `sudo apt install gradle`
-- Windows: 从 https://gradle.org/install 安装
+首次运行自动从腾讯云镜像下载 Gradle 8.14.2、从阿里云镜像拉依赖（无需科学上网）。
 
 ## 预期输出
 
@@ -40,16 +38,17 @@ gradle run
 
 ```
 c01-chat-only/
-├── settings.gradle.kts          # 工程名
-├── build.gradle.kts             # application 插件 + Jackson 依赖 + Java 21 toolchain
-└── src/main/java/com/renxin/gya/c01/
-    └── Chat.java                # 命令行聊天主程序
+├── gradlew / gradle/wrapper/   # Gradle Wrapper（固定 8.14.2，腾讯云镜像）
+├── settings.gradle.kts
+├── build.gradle.kts            # application 插件 + Jackson(阿里云) + Java 21 toolchain
+└── src/main/java/cn/renxinblog/c01/
+    └── Chat.java               # 命令行聊天主程序
 ```
 
 ## 常见坑
 
 | 症状 | 原因 | 解法 |
 |------|------|------|
-| `gradle: command not found` | 未装 Gradle | 按上文安装 |
-| `JAVA_HOME` 或 toolchain 报错 | JDK 不是 21 | `java -version` 确认 21+ |
+| `Unable to locate a Java Runtime` | 未装 JDK 或 JAVA_HOME 未配置 | `java -version` 确认 21+ |
 | 401 `Invalid API key` | Key 未设置 | `export DEEPSEEK_API_KEY=sk-...` |
+| `gradlew` 下载发行版缓慢 | 镜像未生效 | 检查 gradle-wrapper.properties 的 distributionUrl 为腾讯云镜像 |

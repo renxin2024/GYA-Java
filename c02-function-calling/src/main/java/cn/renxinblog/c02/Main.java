@@ -1,4 +1,4 @@
-package com.renxin.gya.c02;
+package cn.renxinblog.c02;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
