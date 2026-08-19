@@ -11,11 +11,13 @@ GYA 系列第 2 篇的 Java 21 + Gradle 实现。Python 版见 [GYA/c02-function
 | 包名 | `cn.renxinblog.c02` |
 | JSON | Jackson（`jackson-databind`，走阿里云镜像下载） |
 
-## 运行
+## 运行（多模块工程，从仓库根目录）
 
 ```bash
+git clone git@github.com:renxin2024/GYA-Java.git
+cd GYA-Java
 export DEEPSEEK_API_KEY=sk-你的key
-./gradlew run
+./gradlew :c02-function-calling:run
 ```
 
 首次运行自动从腾讯云镜像下载 Gradle 8.14.2、从阿里云镜像拉依赖（无需科学上网）。
