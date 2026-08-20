@@ -40,3 +40,11 @@ status=ERROR, error_code=EXECUTION_ERROR
 
 1. **HTTP 400 `reasoning_content` 错误**：DeepSeek thinking 模式下，回喂 assistant 消息必须**原样**包含 `reasoning_content`。代码里 `messages.add((ObjectNode) msg)` 直接回传完整消息，不要手动重建。
 2. **多个 tool_calls**：assistant 消息（含全部 tool_calls）只 append 一次，然后每个 tool_call 结果各 append 一条 `role=tool` 消息。
+
+## 与 Python 版的差异（如实说明）
+
+| 场景 | Python 版 | Java 版 |
+|------|-----------|---------|
+| [3] calculator 缺参数 | `INVALID_PARAM`（TypeError 捕获） | `EXECUTION_ERROR`（简化计算器先走表达式校验，空参数触发非法字符异常） |
+
+核心一致：**错误显式化，程序可编程地判断**。差异仅来自两语言参数校验的时机不同，不影响本文论点——你的实现里用哪个错误码都行，关键是别返回裸字符串。
