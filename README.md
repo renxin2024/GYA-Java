@@ -50,6 +50,9 @@ GYA-Java/
 ├── c02-function-calling/          # 子模块：Function Calling 第一性原理
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c02/Main.java
+├── c16-sse-agent-stream/          # 子模块：Agent Run 的 SSE 事件流
+│   ├── build.gradle.kts
+│   └── src/main/java/cn/renxinblog/c16/Main.java
 └── ...                            # 后续篇目按同结构追加
 ```
 
@@ -65,6 +68,9 @@ export DEEPSEEK_API_KEY=sk-你的key   # https://platform.deepseek.com 获取
 
 # C02：Function Calling 完整闭环
 ./gradlew :c02-function-calling:run
+
+# C16：SSE Agent Run 事件流（终端二用 curl -N 订阅）
+./gradlew :c16-sse-agent-stream:run --args="--once"
 ```
 
 首次运行会从腾讯云镜像下载 Gradle 8.14.2、从阿里云镜像拉依赖，稍等片刻即跑起来。
