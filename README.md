@@ -50,6 +50,12 @@ GYA-Java/
 ├── c02-function-calling/          # 子模块：Function Calling 第一性原理
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c02/Main.java
+├── c09-skill-system/              # 子模块：Skill 发现、加载与确定性校验
+│   ├── build.gradle.kts
+│   └── src/main/java/cn/renxinblog/c09/Main.java
+├── c10-agent-theory-timeline/     # 子模块：ReAct 离线回放与可选真实模型调用
+│   ├── build.gradle.kts
+│   └── src/main/java/cn/renxinblog/c10/Main.java
 ├── c16-sse-agent-stream/          # 子模块：Agent Run 的 SSE 事件流
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c16/Main.java
@@ -68,6 +74,12 @@ export DEEPSEEK_API_KEY=sk-你的key   # https://platform.deepseek.com 获取
 
 # C02：Function Calling 完整闭环
 ./gradlew :c02-function-calling:run
+
+# C09：Skill 发现、按需加载与成功/失败样例校验（无需 API Key）
+./gradlew :c09-skill-system:run
+
+# C10：ReAct 控制流离线回放（无需 API Key）
+./gradlew :c10-agent-theory-timeline:run
 
 # C16：SSE Agent Run 事件流（终端二用 curl -N 订阅）
 ./gradlew :c16-sse-agent-stream:run --args="--once"
