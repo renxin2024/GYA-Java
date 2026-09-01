@@ -1,56 +1,46 @@
-# C01 Java 版：只会说话的模型（命令行聊天）
+# C01 演示（Java 21）：一次最小调用，看清职责边界
 
-GYA 系列第 1 篇的 Java 21 + Gradle 实现。Python 版见 [GYA/c01-chat-only](https://github.com/renxin2024/GYA/tree/main/c01-chat-only)。
+一个只做一件事的最小客户端：把「一次调用里谁发了什么、谁收到了什么」打印成 Trace。它不会自动查天气、也不会调用工具——这正是 C01 要你看清的边界。
 
-## 技术栈
+## 前置环境
 
-| 项 | 版本 |
+| 项 | 要求 |
 |----|------|
 | JDK | 21（LTS） |
-| 构建 | Gradle Wrapper 8.14.2（`./gradlew run`，无需预装 Gradle） |
-| 包名 | `cn.renxinblog.c01` |
-| JSON | Jackson（`jackson-databind`，走阿里云镜像下载） |
+| 构建 | 仓库根目录 `./gradlew`（无需预装 Gradle） |
+| 依赖 | 本例子模块只用 JDK 标准库，不依赖 Jackson |
+| API Key | DeepSeek 官方 Key（仅真实调用需要，`--dry-run` 不需要） |
 
-## 运行（多模块工程，从仓库根目录）
+Python 等价实现见 **GYA** 仓库的 `c01-chat-only/main.py`。
+
+## 运行
 
 ```bash
-git clone git@github.com:renxin2024/GYA-Java.git
-cd GYA-Java
-export DEEPSEEK_API_KEY=sk-你的key
-./gradlew :c01-chat-only:run
-```
+# 不联网：看 Runtime 会组装出什么样的请求
+./gradlew :c01-chat-only:run --args="--dry-run 上海今天天气怎么样？"
 
-首次运行自动从腾讯云镜像下载 Gradle 8.14.2、从阿里云镜像拉依赖（无需科学上网）。
+# 注入一条 system 级运行时提示
+RUNTIME_CONTEXT="只回答可以从请求证明的事实" ./gradlew :c01-chat-only:run --args="--dry-run 上海今天天气怎么样？"
+
+# 真实调用
+export DEEPSEEK_API_KEY=sk-你的key
+./gradlew :c01-chat-only:run --args="上海今天天气怎么样？"
+```
 
 ## 预期输出
 
-```
-你 > 你好，你是谁？
-模型 > 你好呀！我是 DeepSeek，由深度求索公司创造的 AI 助手。……
-你 > 你会查天气吗？
-模型 > 目前我无法直接查询实时天气信息……
-你 > exit
-```
+空上下文 dry-run：
 
-- 能连续多轮对话（模型记得前文——因为每次请求都把整个历史发回去了）
-- 问「你能查天气/订机票/执行操作吗」→ 模型回答「不能」（它只会生成文本）
-- 退出：输入 `exit` / `quit` / `退出`，或 Ctrl+C
-
-## 工程结构
-
-```
-c01-chat-only/
-├── gradlew / gradle/wrapper/   # Gradle Wrapper（固定 8.14.2，腾讯云镜像）
-├── settings.gradle.kts
-├── build.gradle.kts            # application 插件 + Jackson(阿里云) + Java 21 toolchain
-└── src/main/java/cn/renxinblog/c01/
-    └── Chat.java               # 命令行聊天主程序
+```json
+{"event":"context.skipped","owner":"client_runtime","source":"env:RUNTIME_CONTEXT","reason":"empty_optional_context"}
+{"event":"request.prepared","owner":"client_runtime","method":"POST","url":"https://api.deepseek.com/chat/completions","headers":{"Content-Type":"application/json","Authorization":"Bearer <redacted>"},"body":{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"上海今天天气怎么样？"}],"stream":false}}
+{"event":"run.finished","owner":"client_runtime","outcome":"dry_run_no_network"}
 ```
 
-## 常见坑
+非空 `RUNTIME_CONTEXT` 时，第一条 Trace 变为 `context.prepared`（含 `role=system`、字节数与 SHA-256），`request.prepared` 的 `messages` 变成 `system → user`，且 system 原文显示为 `<redacted>`。
 
-| 症状 | 原因 | 解法 |
-|------|------|------|
-| `Unable to locate a Java Runtime` | 未装 JDK 或 JAVA_HOME 未配置 | `java -version` 确认 21+ |
-| 401 `Invalid API key` | Key 未设置 | `export DEEPSEEK_API_KEY=sk-...` |
-| `gradlew` 下载发行版缓慢 | 镜像未生效 | 检查 gradle-wrapper.properties 的 distributionUrl 为腾讯云镜像 |
+## 失败排查
+
+- 编译期解析到旧版 JDK → 确认 `java -version` 是 21，仓库根目录 `./gradlew` 自带 Wrapper。
+- 真实调用认证失败 → 检查 `DEEPSEEK_API_KEY`（或 `LLM_API_KEY`）是否已 `export`。
+- 真实调用网络超时/连不上 → 换网络或确认代理；`--dry-run` 不联网，可先单独验证。

@@ -7,7 +7,7 @@ dependencies {
 }
 
 application {
-    mainClass = "cn.renxinblog.c01.Chat"
+    mainClass = "cn.renxinblog.c01.Main"
 }
 
 // 让 ./gradlew :c01-chat-only:run 把终端 stdin 转发给 Java 进程
