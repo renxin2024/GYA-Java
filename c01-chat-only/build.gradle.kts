@@ -2,21 +2,27 @@ plugins {
     application
 }
 
+repositories {
+    maven { url = uri("https://maven.aliyun.com/repository/public") }
+    maven { url = uri("https://maven.aliyun.com/repository/central") }
+    mavenCentral()
+}
+
 dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
 }
 
 application {
-    mainClass = "cn.renxinblog.c01.Main"
-}
-
-// 让 ./gradlew :c01-chat-only:run 把终端 stdin 转发给 Java 进程
-tasks.withType<JavaExec> {
-    standardInput = System.`in`
+    mainClass = "cn.renxinblog.c01.C01PromptAction"
 }
 
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
