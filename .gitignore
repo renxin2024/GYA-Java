@@ -14,3 +14,8 @@ build/
 # --- 系统/编辑器 ---
 .DS_Store
 *.class
+# --- 运行时产物（SQLite 记忆库等）---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

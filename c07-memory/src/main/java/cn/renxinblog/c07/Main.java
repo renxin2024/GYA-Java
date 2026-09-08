@@ -9,68 +9,212 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashSet;
-import java.util.regex.Pattern;
 
 /**
- * C07 演示（Java 21 + Gradle）：三层记忆——上下文、短期、长期
+ * C07 演示（Java 21 + Gradle）：四层记忆——工作、情节、语义、程序
  *
  * 与 Python 版 memory_demo.py 同构：
- *   [1] 短期记忆：用户自报姓名 → 提取 → 后续轮次记忆补位
- *   [2] 无记忆对比：模型说"我不知道你是谁"
- *   [3] 长期记忆：纯 Java 余弦相似度检索（中文 bigram + 停用词）
+ *   [1] 情节记忆（Episodic）：关键事实落 SQLite，重启读回
+ *   [2] 语义记忆（Semantic）：bge-m3 向量化 + Qdrant 检索（含同义改写命中）
+ *   [3] 无记忆对照：模型说"我不知道你是谁"
+ *   [4] 程序记忆（Procedural）：只点一句，钩第九话 Skill
+ *
+ * 真实 Embedding 走 Ollama bge-m3（经 hermes-gateway stream 代理，127.0.0.1:11434）；
+ * 服务不可达时降级到纯 Java TF-IDF 检索（离线兜底，只做回归）。
  *
  * 运行：
- *   export DEEPSEEK_API_KEY=sk-xxx
+ *   export DEEPSEEK_API_KEY=sk-xxx   # LLM 对照（可选）
+ *   export QDRANT_API_KEY=xxx        # Qdrant 认证
  *   ./gradlew :c07-memory:run
  *
- * 依赖：JDK 21 + Jackson（build.gradle.kts 声明，Gradle 自动拉取）。
+ * 依赖：JDK 21 + Jackson + sqlite-jdbc（build.gradle.kts 声明，Gradle 自动拉取）。
  */
 public class Main {
 
-    static final String API_URL = System.getenv().getOrDefault("LLM_API_URL", "https://api.deepseek.com/chat/completions");
-    static final String API_KEY = System.getenv().getOrDefault("DEEPSEEK_API_KEY", "");
+    static final String LLM_URL = System.getenv().getOrDefault("LLM_API_URL", "https://api.deepseek.com/chat/completions");
+    static final String LLM_KEY = System.getenv().getOrDefault("DEEPSEEK_API_KEY", "");
     static final String MODEL = System.getenv().getOrDefault("LLM_MODEL", "deepseek-v4-flash");
+
+    static final String EMBEDDING_URL = System.getenv().getOrDefault("EMBEDDING_URL", "http://127.0.0.1:11434");
+    static final String EMBEDDING_MODEL = System.getenv().getOrDefault("EMBEDDING_MODEL", "bge-m3");
+    static final String QDRANT_URL = System.getenv().getOrDefault("QDRANT_URL", "http://127.0.0.1:6333");
+    static final String QDRANT_API_KEY = System.getenv().getOrDefault("QDRANT_API_KEY", "");
+    static final String COLLECTION = System.getenv().getOrDefault("MEMORY_COLLECTION", "gya_c07_memories");
+    static final String DB_PATH = System.getenv().getOrDefault("MEMORY_DB_PATH", "gya_c07_memory.db");
 
     static final ObjectMapper JSON = new ObjectMapper();
     static final HttpClient CLIENT = HttpClient.newHttpClient();
 
-    static JsonNode callLLM(List<ObjectNode> messages) throws Exception {
+    // ===============================================================
+    // LLM（只做"无记忆 vs 有记忆"对照，核心机制不依赖它）
+    // ===============================================================
+    static String callLLM(List<ObjectNode> messages) throws Exception {
         ObjectNode payload = JSON.createObjectNode();
         payload.put("model", MODEL);
         ArrayNode arr = payload.putArray("messages");
         messages.forEach(arr::add);
         payload.put("stream", false);
 
-        HttpRequest req = HttpRequest.newBuilder(URI.create(API_URL))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(LLM_URL))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + API_KEY)
+                .header("Authorization", "Bearer " + LLM_KEY)
                 .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
                 .build();
         HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
         JsonNode root = JSON.readTree(resp.body());
         if (!root.has("choices")) throw new RuntimeException("API 错误: " + resp.body());
-        return root.path("choices").get(0).path("message");
+        return root.path("choices").get(0).path("message").path("content").asText();
     }
 
-    // ---------------------------------------------------------------
-    // 短期记忆：会话内关键事实
-    // ---------------------------------------------------------------
-    static final Map<String, String> WORKING = new LinkedHashMap<>();
+    // ===============================================================
+    // 工作记忆（Working）：内存 messages，窗口内
+    // ===============================================================
+    static final List<ObjectNode> WORKING = new ArrayList<>();
 
-    // ---------------------------------------------------------------
-    // 长期记忆：纯 Java 余弦检索（中文 bigram + 停用词）
-    // ---------------------------------------------------------------
-    record LTMEntry(String text, Set<String> tokens) {}
+    // ===============================================================
+    // 情节记忆（Episodic）：SQLite 落盘，重启读回
+    // ===============================================================
+    static Connection newDb() throws Exception {
+        Connection c = DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
+        try (Statement st = c.createStatement()) {
+            // 在受限沙箱环境（如 CI / 容器化 shell）下，SQLite 默认的 DELETE journal
+            // 模式会调用 unlink 删除 -journal 文件，可能被 sandbox 的 seatbelt 策略
+            // 拦截（报 SQLITE_IOERR_DELETE）。这里关闭 journal，让事务直接写主文件。
+            // 正常本地终端环境可去掉这两行，恢复崩溃安全性。演示数据不要求 crash-safe。
+            st.execute("PRAGMA journal_mode=OFF");
+            st.execute("PRAGMA synchronous=OFF");
+            st.execute("CREATE TABLE IF NOT EXISTS facts (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                    "subject TEXT NOT NULL, fact TEXT NOT NULL," +
+                    "session_id TEXT NOT NULL, created_at TEXT NOT NULL)");
+        }
+        return c;
+    }
 
-    static final List<LTMEntry> LONG_TERM = new ArrayList<>();
+    static void storeFact(Connection c, String subject, String fact, String sessionId) throws Exception {
+        try (var ps = c.prepareStatement("INSERT INTO facts(subject, fact, session_id, created_at) VALUES (?,?,?,?)")) {
+            ps.setString(1, subject);
+            ps.setString(2, fact);
+            ps.setString(3, sessionId);
+            ps.setString(4, java.time.OffsetDateTime.now().toString());
+            ps.executeUpdate();
+        }
+    }
 
-    static final Set<String> STOP = Set.of("用户", "喜欢", "什么", "自己", "我们", "这个", "那个", "一个");
+    static List<String> readFacts(Connection c) throws Exception {
+        List<String> out = new ArrayList<>();
+        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT subject, fact, session_id FROM facts ORDER BY id")) {
+            while (rs.next()) {
+                out.add("- " + rs.getString("subject") + ": " + rs.getString("fact") + "  (session=" + rs.getString("session_id") + ")");
+            }
+        }
+        return out;
+    }
+
+    // ===============================================================
+    // 语义记忆（Semantic）：bge-m3 + Qdrant；离线 TF-IDF 兜底
+    // ===============================================================
+    static List<Double> embedOne(String text) throws Exception {
+        ObjectNode body = JSON.createObjectNode();
+        body.put("model", EMBEDDING_MODEL);
+        body.put("prompt", text);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(EMBEDDING_URL + "/api/embeddings"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+        JsonNode arr = JSON.readTree(resp.body()).path("embedding");
+        List<Double> vec = new ArrayList<>();
+        arr.forEach(n -> vec.add(n.asDouble()));
+        return vec;
+    }
+
+    static boolean qdrantAvailable() {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(URI.create(QDRANT_URL + "/collections"))
+                    .header("api-key", QDRANT_API_KEY)
+                    .GET().build();
+            CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    static void ensureCollection() throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(QDRANT_URL + "/collections/" + COLLECTION))
+                .header("api-key", QDRANT_API_KEY).GET().build();
+        int code = CLIENT.send(req, HttpResponse.BodyHandlers.ofString()).statusCode();
+        if (code == 404) {
+            ObjectNode body = JSON.createObjectNode();
+            ObjectNode vectors = body.putObject("vectors");
+            vectors.put("size", 1024);
+            vectors.put("distance", "Cosine");
+            HttpRequest put = HttpRequest.newBuilder(URI.create(QDRANT_URL + "/collections/" + COLLECTION))
+                    .header("api-key", QDRANT_API_KEY)
+                    .header("Content-Type", "application/json")
+                    .PUT(HttpRequest.BodyPublishers.ofString(body.toString()))
+                    .build();
+            CLIENT.send(put, HttpResponse.BodyHandlers.ofString());
+        }
+    }
+
+    static void storeSemantic(String text) throws Exception {
+        List<Double> vec = embedOne(text);
+        long id = Math.floorMod(text.hashCode(), 1_000_000_000_000L);
+        ObjectNode body = JSON.createObjectNode();
+        ArrayNode points = body.putArray("points");
+        ObjectNode p = points.addObject();
+        p.put("id", id);
+        ArrayNode vecArr = p.putArray("vector");
+        vec.forEach(vecArr::add);
+        ObjectNode payload = p.putObject("payload");
+        payload.put("text", text);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(QDRANT_URL + "/collections/" + COLLECTION + "/points?wait=true"))
+                .header("api-key", QDRANT_API_KEY)
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    static List<String> retrieveSemantic(String query) throws Exception {
+        List<Double> vec = embedOne(query);
+        ObjectNode body = JSON.createObjectNode();
+        ArrayNode vecArr = body.putArray("vector");
+        vec.forEach(vecArr::add);
+        body.put("limit", 2);
+        body.put("with_payload", true);
+        HttpRequest req = HttpRequest.newBuilder(URI.create(QDRANT_URL + "/collections/" + COLLECTION + "/points/search"))
+                .header("api-key", QDRANT_API_KEY)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+        JsonNode result = JSON.readTree(resp.body()).path("result");
+        List<String> out = new ArrayList<>();
+        for (JsonNode p : result) {
+            double score = p.path("score").asDouble();
+            String text = p.path("payload").path("text").asText();
+            out.add(text + "  score=" + String.format("%.3f", score));
+        }
+        return out;
+    }
+
+    // ---------- 离线 TF-IDF 兜底（无 embedding/qdrant 服务时） ----------
+    static final List<String> OFFLINE_DOCS = new ArrayList<>();
+    static final Set<String> STOP = Set.of("的", "了", "是", "在", "我", "你", "什么", "那个",
+            "这个", "一个", "喜欢", "用户", "还有", "以及", "就是", "会");
 
     static Set<String> tokenize(String text) {
         Set<String> tokens = new HashSet<>();
@@ -95,89 +239,89 @@ public class Main {
         return inter.size() / (Math.sqrt(a.size()) * Math.sqrt(b.size()));
     }
 
-    static void storeLongTerm(String text) {
-        LONG_TERM.add(new LTMEntry(text, tokenize(text)));
-    }
-
-    static List<LTMEntry> retrieve(String query) {
+    static List<String> retrieveOffline(String query) {
         Set<String> qt = tokenize(query);
-        return LONG_TERM.stream()
-                .map(e -> Map.entry(cosine(qt, e.tokens()), e))
-                .filter(p -> p.getKey() > 0)
+        return OFFLINE_DOCS.stream()
+                .map(d -> Map.entry(cosine(qt, tokenize(d)), d))
+                .filter(e -> e.getKey() > 0)
                 .sorted((x, y) -> Double.compare(y.getKey(), x.getKey()))
                 .limit(2)
-                .map(Map.Entry::getValue)
+                .map(e -> e.getValue() + "  score=" + String.format("%.3f", e.getKey()))
                 .toList();
     }
 
-    // ---------------------------------------------------------------
-    // Agent：带短期记忆的对话
-    // ---------------------------------------------------------------
-    static String chat(String userMsg, boolean useWorking) throws Exception {
-        List<ObjectNode> messages = new ArrayList<>();
-        if (useWorking && !WORKING.isEmpty()) {
-            ObjectNode sys = JSON.createObjectNode();
-            sys.put("role", "system");
-            sys.put("content", "以下是本会话早些时候已确认的事实，回答用户问题时请使用它们：\n"
-                    + WORKING.entrySet().stream()
-                      .map(e -> "- " + e.getKey() + ": " + e.getValue())
-                      .reduce("", (a, b) -> a + b + "\n"));
-            messages.add(sys);
-        }
-        ObjectNode user = JSON.createObjectNode();
-        user.put("role", "user");
-        user.put("content", userMsg);
-        messages.add(user);
-        return callLLM(messages).path("content").asText();
-    }
+    // ===============================================================
+    // main
+    // ===============================================================
+    public static void main(String[] args) throws Exception {
+        System.out.println("=".repeat(64));
+        System.out.println("[1] 情节记忆：关键事实落 SQLite，重启读回");
+        System.out.println("=".repeat(64));
 
-    static void extractAndStore(String userMsg, String reply) {
-        Pattern[] patterns = {
-                Pattern.compile("我叫(.+?)[，。！？\\s]"),
-                Pattern.compile("我喜欢(.+?)[，。！？\\s]"),
-        };
-        String combined = userMsg + reply;
-        for (int i = 0; i < patterns.length; i++) {
-            var m = patterns[i].matcher(combined);
-            if (m.find()) {
-                WORKING.put(i == 0 ? "用户名字" : "用户偏好", m.group(1));
+        Connection db = newDb();
+        try (Statement st = db.createStatement()) {
+            st.execute("DELETE FROM facts");  // 干净起点
+        }
+        storeFact(db, "用户名", "张三", "session-A");
+        storeFact(db, "偏好", "喝茶，尤其是龙井", "session-A");
+        storeFact(db, "职业", "Java 后端工程师", "session-A");
+        System.out.println("情节记忆已写入 SQLite（3 条）：");
+        readFacts(db).forEach(f -> System.out.println("  " + f));
+
+        System.out.println("\n（模拟进程重启：新开连接，读回）");
+        db.close();
+        db = newDb();
+        System.out.println("重启后读回的事实：");
+        readFacts(db).forEach(f -> System.out.println("  " + f));
+        db.close();
+
+        System.out.println("\n" + "=".repeat(64));
+        System.out.println("[2] 语义记忆：bge-m3 + Qdrant，跨会话召回（含同义改写）");
+        System.out.println("=".repeat(64));
+
+        boolean online = qdrantAvailable();
+        if (online) {
+            ensureCollection();
+            for (String d : List.of("用户喜欢喝茶，尤其是龙井",
+                    "用户职业是 Java 后端工程师，擅长并发编程",
+                    "用户的博客主题是 AI Agent 开发")) {
+                storeSemantic(d);
+            }
+            for (String q : List.of("用户喜欢喝什么？", "用户爱喝什么饮料？", "用户职业是什么？", "博客写什么？")) {
+                System.out.println("  问「" + q + "」→ 命中 [" + retrieveSemantic(q).get(0) + "]");
+            }
+        } else {
+            System.out.println("⚠️  Embedding/Qdrant 不可达，降级到离线 TF-IDF 检索");
+            OFFLINE_DOCS.addAll(List.of("用户喜欢喝茶，尤其是龙井",
+                    "用户职业是 Java 后端工程师，擅长并发编程",
+                    "用户的博客主题是 AI Agent 开发"));
+            for (String q : List.of("用户喜欢喝什么？", "用户职业是什么？", "博客写什么？")) {
+                System.out.println("  问「" + q + "」→ " + retrieveOffline(q));
             }
         }
-    }
 
-    public static void main(String[] args) throws Exception {
-        if (API_KEY.isEmpty()) {
-            System.out.println("请先设置 DEEPSEEK_API_KEY 环境变量（https://platform.deepseek.com 获取）");
-            return;
+        System.out.println("\n" + "=".repeat(64));
+        System.out.println("[3] 无记忆对照：模型没有上下文时，答不上'我是谁'");
+        System.out.println("=".repeat(64));
+        if (LLM_KEY.isEmpty()) {
+            System.out.println("  （未设置 DEEPSEEK_API_KEY，跳过 LLM 对照）");
+        } else {
+            ObjectNode user = JSON.createObjectNode();
+            user.put("role", "user");
+            user.put("content", "我是谁？我叫什么名字？（没有任何上下文）");
+            String r = callLLM(List.of(user));
+            System.out.println("  模型: " + truncate(r, 120));
         }
-        System.out.println("模型: " + MODEL);
-        System.out.println("=".repeat(60));
 
-        // [1] 短期记忆
-        System.out.println("\n[1] 短期记忆：用户自报姓名，Agent 存下来");
-        String u1 = "你好，我叫张三。";
-        String r1 = chat(u1, false);
-        System.out.println("  用户: " + u1 + "\n  模型: " + truncate(r1, 60));
-        extractAndStore(u1, r1);
-        System.out.println("  → 短期记忆已存: 用户名字=张三");
+        System.out.println("\n" + "=".repeat(64));
+        System.out.println("[4] 程序记忆：事实会过期，方法可复用（钩第九话 Skill）");
+        System.out.println("=".repeat(64));
+        System.out.println("  前三层记住的是『事实』；第四层记住的是『怎么做』。");
+        System.out.println("  把『经过验证的做法』固化成可重复调用的资产，就是 Skill——第九话展开。");
 
-        // [2] 记忆补位
-        System.out.println("\n[2] 短期记忆：几轮之后，模型已经'忘了'用户名字——但记忆补上了");
-        for (int i = 1; i <= 2; i++) chat("帮我写一段关于第" + i + "个主题的文字。", false);
-        String r2 = chat("我是谁？我叫什么名字？", true);
-        System.out.println("  模型(带记忆): " + truncate(r2, 60));
-        String r2b = chat("我是谁？我叫什么名字？", false);
-        System.out.println("  模型(无记忆): " + truncate(r2b, 60));
-
-        // [3] 长期记忆
-        System.out.println("\n[3] 长期记忆：向量检索");
-        storeLongTerm("用户喜欢喝茶，尤其是龙井");
-        storeLongTerm("用户职业是 Java 后端工程师，擅长并发编程");
-        storeLongTerm("用户的博客主题是 AI Agent 开发");
-        for (String q : new String[]{"用户喜欢喝什么？", "用户职业是什么？", "博客写什么？"}) {
-            var hits = retrieve(q);
-            System.out.println("  问『" + q + "』→ " + hits.stream().map(LTMEntry::text).toList());
-        }
+        System.out.println("\n" + "=".repeat(64));
+        System.out.println("核心结论：上下文窗口 ≠ 记忆。");
+        System.out.println("  模型从不记得任何事，是我们每次把该记住的东西检索出来、塞回给它的。");
     }
 
     static String truncate(String s, int n) {
