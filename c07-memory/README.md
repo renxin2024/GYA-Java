@@ -32,11 +32,18 @@ export DEEPSEEK_API_KEY=sk-你的key
 ## 预期输出（关键部分）
 
 ```
-[1] 情节记忆：关键事实落 SQLite，重启读回
+[1] 情节记忆：关键事实落 SQLite，重启读回 + SQL 召回
 重启后读回的事实：
   - 用户名: 张三
   - 偏好: 最近在戒咖啡，想少喝一点
   - 职业: Java 后端工程师
+
+（情节记忆怎么召回：SQL 精确查询，不靠全量读回）
+  按 subject 精确查「偏好」→ 命中 1 条：
+    - 最近在戒咖啡，想少喝一点
+  按 session 查「session-A」→ 命中 3 条（这场对话发生过的所有事）
+  按关键词模糊查「咖啡」→ 命中 1 条：
+    - 偏好: 最近在戒咖啡，想少喝一点
 
 [2] 语义记忆：bge-m3 + Qdrant，跨会话召回（含同义改写）
   问「用户喝咖啡吗？」→ 命中 [用户最近在戒咖啡，想少喝一点  score=0.753]
@@ -58,4 +65,4 @@ export DEEPSEEK_API_KEY=sk-你的key
 ## 说明
 
 - 语义记忆与 Python 版一致：真实 bge-m3（1024 维）+ Qdrant 检索；Embedding/Qdrant 不可达时降级到纯 Java TF-IDF 兜底（只做回归，不冒充真实 Embedding）。
-- 情节记忆用 `sqlite-jdbc`（`org.xerial:sqlite-jdbc:3.46.0.0`）落盘；**默认不关闭 journal**（保留崩溃安全）。只有在受限沙箱环境报 `SQLITE_IOERR_DELETE` 时，才通过环境变量 `MEMORY_SQLITE_UNSAFE_NO_JOURNAL=1` 显式关闭，仅限一次性实验。
+- 情节记忆用 `sqlite-jdbc`（`org.xerial:sqlite-jdbc:3.46.0.0`）落盘；召回走 SQL 精确查询（`factsBySubject` / `factsBySession` / `factsSearch`），不靠全量读回。**默认不关闭 journal**（保留崩溃安全）。只有在受限沙箱环境报 `SQLITE_IOERR_DELETE` 时，才通过环境变量 `MEMORY_SQLITE_UNSAFE_NO_JOURNAL=1` 显式关闭，仅限一次性实验。

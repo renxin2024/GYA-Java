@@ -24,7 +24,7 @@ import java.util.Set;
  * C07 演示（Java 21 + Gradle）：四层记忆——工作、情节、语义、程序
  *
  * 与 Python 版 memory_demo.py 同构：
- *   [1] 情节记忆（Episodic）：事实落 SQLite，重启读回
+ *   [1] 情节记忆（Episodic）：事实落 SQLite，重启读回 + 按 subject/session/关键词 SQL 召回
  *   [2] 语义记忆（Semantic）：bge-m3 向量化 + Qdrant 检索（含同义改写命中）
  *   [3] 完整闭环：保存记忆 → 提问 → 检索 → 组装上下文 → 模型回答（有/无/无命中三态）
  *   [4] 程序记忆（Procedural）：只点一句，钩第九话 Skill
@@ -121,6 +121,40 @@ public class Main {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("SELECT subject, fact, session_id FROM facts ORDER BY id")) {
             while (rs.next()) {
                 out.add("- " + rs.getString("subject") + ": " + rs.getString("fact") + "  (session=" + rs.getString("session_id") + ")");
+            }
+        }
+        return out;
+    }
+
+    // 情节记忆的召回：SQL 精确查询，不靠全量 readFacts。
+    static List<String> factsBySubject(Connection c, String subject) throws Exception {
+        List<String> out = new ArrayList<>();
+        try (var ps = c.prepareStatement("SELECT subject, fact FROM facts WHERE subject = ? ORDER BY id")) {
+            ps.setString(1, subject);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(rs.getString("subject") + ": " + rs.getString("fact"));
+            }
+        }
+        return out;
+    }
+
+    static List<String> factsBySession(Connection c, String sessionId) throws Exception {
+        List<String> out = new ArrayList<>();
+        try (var ps = c.prepareStatement("SELECT subject, fact FROM facts WHERE session_id = ? ORDER BY id")) {
+            ps.setString(1, sessionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(rs.getString("subject") + ": " + rs.getString("fact"));
+            }
+        }
+        return out;
+    }
+
+    static List<String> factsSearch(Connection c, String keyword) throws Exception {
+        List<String> out = new ArrayList<>();
+        try (var ps = c.prepareStatement("SELECT subject, fact FROM facts WHERE fact LIKE ? ORDER BY id")) {
+            ps.setString(1, "%" + keyword + "%");
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(rs.getString("subject") + ": " + rs.getString("fact"));
             }
         }
         return out;
@@ -284,6 +318,17 @@ public class Main {
         db = newDb();
         System.out.println("重启后读回的事实：");
         readFacts(db).forEach(f -> System.out.println("  " + f));
+
+        System.out.println("\n（情节记忆怎么召回：SQL 精确查询，不靠全量读回）");
+        List<String> bySubject = factsBySubject(db, "偏好");
+        System.out.println("  按 subject 精确查「偏好」→ 命中 " + bySubject.size() + " 条：");
+        bySubject.forEach(f -> System.out.println("    - " + f));
+        List<String> bySession = factsBySession(db, "session-A");
+        System.out.println("  按 session 查「session-A」→ 命中 " + bySession.size() + " 条（这场对话发生过的所有事）：");
+        bySession.forEach(f -> System.out.println("    - " + f));
+        List<String> search = factsSearch(db, "咖啡");
+        System.out.println("  按关键词模糊查「咖啡」→ 命中 " + search.size() + " 条：");
+        search.forEach(f -> System.out.println("    - " + f));
         db.close();
 
         System.out.println("\n" + "=".repeat(64));
