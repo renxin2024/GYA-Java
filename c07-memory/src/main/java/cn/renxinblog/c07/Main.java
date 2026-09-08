@@ -24,9 +24,9 @@ import java.util.Set;
  * C07 演示（Java 21 + Gradle）：四层记忆——工作、情节、语义、程序
  *
  * 与 Python 版 memory_demo.py 同构：
- *   [1] 情节记忆（Episodic）：关键事实落 SQLite，重启读回
+ *   [1] 情节记忆（Episodic）：事实落 SQLite，重启读回
  *   [2] 语义记忆（Semantic）：bge-m3 向量化 + Qdrant 检索（含同义改写命中）
- *   [3] 无记忆对照：模型说"我不知道你是谁"
+ *   [3] 完整闭环：保存记忆 → 提问 → 检索 → 组装上下文 → 模型回答（有/无/无命中三态）
  *   [4] 程序记忆（Procedural）：只点一句，钩第九话 Skill
  *
  * 真实 Embedding 走 Ollama bge-m3（经 hermes-gateway stream 代理，127.0.0.1:11434）；
@@ -87,12 +87,17 @@ public class Main {
     static Connection newDb() throws Exception {
         Connection c = DriverManager.getConnection("jdbc:sqlite:" + DB_PATH);
         try (Statement st = c.createStatement()) {
-            // 在受限沙箱环境（如 CI / 容器化 shell）下，SQLite 默认的 DELETE journal
-            // 模式会调用 unlink 删除 -journal 文件，可能被 sandbox 的 seatbelt 策略
-            // 拦截（报 SQLITE_IOERR_DELETE）。这里关闭 journal，让事务直接写主文件。
-            // 正常本地终端环境可去掉这两行，恢复崩溃安全性。演示数据不要求 crash-safe。
-            st.execute("PRAGMA journal_mode=OFF");
-            st.execute("PRAGMA synchronous=OFF");
+            // 默认保持 SQLite 的标准 journal（WAL 之外默认的 DELETE 模式），
+            // 保留崩溃安全与事务回滚能力——对讲持久化记忆的示例，安全是第一位的。
+            //
+            // 只有在受限沙箱环境（如 CI / 容器化 shell）里，seatbelt 策略会拦截
+            // journal 文件的 unlink 调用、报 SQLITE_IOERR_DELETE 时，才通过环境变量
+            // MEMORY_SQLITE_UNSAFE_NO_JOURNAL=1 显式关闭 journal。这只适用于一次性
+            // 实验环境；正常终端请勿开启，因为关闭 journal 意味着崩溃时可能损坏数据库。
+            if ("1".equals(System.getenv("MEMORY_SQLITE_UNSAFE_NO_JOURNAL"))) {
+                st.execute("PRAGMA journal_mode=OFF");
+                st.execute("PRAGMA synchronous=OFF");
+            }
             st.execute("CREATE TABLE IF NOT EXISTS facts (" +
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "subject TEXT NOT NULL, fact TEXT NOT NULL," +
@@ -189,6 +194,10 @@ public class Main {
     }
 
     static List<String> retrieveSemantic(String query) throws Exception {
+        return retrieveSemantic(query, 0.0);
+    }
+
+    static List<String> retrieveSemantic(String query, double minScore) throws Exception {
         List<Double> vec = embedOne(query);
         ObjectNode body = JSON.createObjectNode();
         ArrayNode vecArr = body.putArray("vector");
@@ -205,6 +214,7 @@ public class Main {
         List<String> out = new ArrayList<>();
         for (JsonNode p : result) {
             double score = p.path("score").asDouble();
+            if (score < minScore) continue;  // 相似度阈值：低分噪声视为「无命中」
             String text = p.path("payload").path("text").asText();
             out.add(text + "  score=" + String.format("%.3f", score));
         }
@@ -262,8 +272,9 @@ public class Main {
         try (Statement st = db.createStatement()) {
             st.execute("DELETE FROM facts");  // 干净起点
         }
+        // 事实「预设写入」：演示不包含「从对话自动提取关键事实」那道工序。
         storeFact(db, "用户名", "张三", "session-A");
-        storeFact(db, "偏好", "喝茶，尤其是龙井", "session-A");
+        storeFact(db, "偏好", "最近在戒咖啡，想少喝一点", "session-A");
         storeFact(db, "职业", "Java 后端工程师", "session-A");
         System.out.println("情节记忆已写入 SQLite（3 条）：");
         readFacts(db).forEach(f -> System.out.println("  " + f));
@@ -282,46 +293,85 @@ public class Main {
         boolean online = qdrantAvailable();
         if (online) {
             ensureCollection();
-            for (String d : List.of("用户喜欢喝茶，尤其是龙井",
+            for (String d : List.of("用户最近在戒咖啡，想少喝一点",
                     "用户职业是 Java 后端工程师，擅长并发编程",
                     "用户的博客主题是 AI Agent 开发")) {
                 storeSemantic(d);
             }
-            for (String q : List.of("用户喜欢喝什么？", "用户爱喝什么饮料？", "用户职业是什么？", "博客写什么？")) {
+            for (String q : List.of("用户喝咖啡吗？", "用户想戒掉什么？", "用户职业是什么？", "博客写什么？")) {
                 System.out.println("  问「" + q + "」→ 命中 [" + retrieveSemantic(q).get(0) + "]");
             }
         } else {
             System.out.println("⚠️  Embedding/Qdrant 不可达，降级到离线 TF-IDF 检索");
-            OFFLINE_DOCS.addAll(List.of("用户喜欢喝茶，尤其是龙井",
+            OFFLINE_DOCS.addAll(List.of("用户最近在戒咖啡，想少喝一点",
                     "用户职业是 Java 后端工程师，擅长并发编程",
                     "用户的博客主题是 AI Agent 开发"));
-            for (String q : List.of("用户喜欢喝什么？", "用户职业是什么？", "博客写什么？")) {
+            for (String q : List.of("用户喝咖啡吗？", "用户想戒掉什么？", "用户职业是什么？", "博客写什么？")) {
                 System.out.println("  问「" + q + "」→ " + retrieveOffline(q));
             }
         }
 
         System.out.println("\n" + "=".repeat(64));
-        System.out.println("[3] 无记忆对照：模型没有上下文时，答不上'我是谁'");
+        System.out.println("[3] 完整闭环：检索结果 → 组装上下文 → 模型回答");
         System.out.println("=".repeat(64));
         if (LLM_KEY.isEmpty()) {
             System.out.println("  （未设置 DEEPSEEK_API_KEY，跳过 LLM 对照）");
         } else {
-            ObjectNode user = JSON.createObjectNode();
-            user.put("role", "user");
-            user.put("content", "我是谁？我叫什么名字？（没有任何上下文）");
-            String r = callLLM(List.of(user));
-            System.out.println("  模型: " + truncate(r, 120));
+            // 复用上面的降级路径：在线用 Qdrant，离线用 TF-IDF。
+            String q = "我最近在戒咖啡，聚餐时该注意什么？";
+
+            // 情况一：有记忆——检索命中偏好（带阈值过滤低分噪声），组装进 system 消息。
+            System.out.println("  问：" + q);
+            List<String> hits = online ? retrieveSemantic(q, 0.5) : retrieveOffline(q);
+            if (hits.isEmpty()) {
+                System.out.println("  ⚠️ 检索无命中，跳过有记忆分支");
+            } else {
+                System.out.println("  检索命中 " + hits.size() + " 条，组装进 system 消息：");
+                for (String h : hits) System.out.println("    - " + h);
+                ObjectNode sys = JSON.createObjectNode();
+                sys.put("role", "system");
+                sys.put("content", "你可以参考下面这些关于当前用户、检索自记忆库的信息：\n"
+                        + String.join("\n", hits));
+                ObjectNode user = JSON.createObjectNode();
+                user.put("role", "user");
+                user.put("content", q);
+                String r = callLLM(List.of(sys, user));
+                System.out.println("  模型（有记忆）: " + truncate(r, 120));
+            }
+
+            // 情况二：无记忆——同一问题，不给任何检索结果。
+            System.out.println("\n  问：" + q + "（不给任何记忆）");
+            ObjectNode user2 = JSON.createObjectNode();
+            user2.put("role", "user");
+            user2.put("content", q);
+            String r2 = callLLM(List.of(user2));
+            System.out.println("  模型（无记忆）: " + truncate(r2, 120));
+
+            // 情况三：无命中——问一个记忆库里没有的话题，检索分数低于阈值。
+            String q3 = "我上个月去过的那个地方，叫什么名字？";
+            List<String> hits3 = online ? retrieveSemantic(q3, 0.5) : retrieveOffline(q3);
+            System.out.println("\n  问：" + q3);
+            if (hits3.isEmpty()) {
+                System.out.println("  （检索无命中，如实告知模型没有相关信息）");
+                ObjectNode user3 = JSON.createObjectNode();
+                user3.put("role", "user");
+                user3.put("content", q3);
+                String r3 = callLLM(List.of(user3));
+                System.out.println("  模型（无命中）: " + truncate(r3, 120));
+            } else {
+                System.out.println("  （意外命中，跳过）");
+            }
         }
 
         System.out.println("\n" + "=".repeat(64));
-        System.out.println("[4] 程序记忆：事实会过期，方法可复用（钩第九话 Skill）");
+        System.out.println("[4] 程序记忆：记「怎么做」，而不是「记了什么事实」（钩第九话 Skill）");
         System.out.println("=".repeat(64));
-        System.out.println("  前三层记住的是『事实』；第四层记住的是『怎么做』。");
-        System.out.println("  把『经过验证的做法』固化成可重复调用的资产，就是 Skill——第九话展开。");
+        System.out.println("  前三层记住的是「关于世界与经历的信息」；第四层记住的是「怎么做一件事」。");
+        System.out.println("  把「完成任务的流程/规则」固化下来，就是 Skill——第九话展开。");
 
         System.out.println("\n" + "=".repeat(64));
         System.out.println("核心结论：上下文窗口 ≠ 记忆。");
-        System.out.println("  模型从不记得任何事，是我们每次把该记住的东西检索出来、塞回给它的。");
+        System.out.println("  模型单次调用不会自动记住历史，跨会话的信息需要由应用这层保存、检索、再喂回。");
     }
 
     static String truncate(String s, int n) {
