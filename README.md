@@ -56,6 +56,9 @@ GYA-Java/
 ├── c10-agent-theory-timeline/     # 子模块：ReAct 离线回放与可选真实模型调用
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c10/Main.java
+├── c11-suspend-protocol/          # 子模块：模型信号 → Runtime 状态迁移 → 调度退出
+│   ├── build.gradle.kts
+│   └── src/main/java/cn/renxinblog/c11/Main.java
 ├── c16-sse-agent-stream/          # 子模块：Agent Run 的 SSE 事件流
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c16/Main.java
@@ -80,6 +83,9 @@ export DEEPSEEK_API_KEY=sk-你的key   # https://platform.deepseek.com 获取
 
 # C10：ReAct 控制流离线回放（无需 API Key）
 ./gradlew :c10-agent-theory-timeline:run
+
+# C11：暂停协议——模型只提决定，Runtime 独占状态迁移（无需 API Key）
+./gradlew :c11-suspend-protocol:run
 
 # C16：SSE Agent Run 事件流（终端二用 curl -N 订阅）
 ./gradlew :c16-sse-agent-stream:run --args="--once"
