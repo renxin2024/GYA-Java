@@ -9,10 +9,8 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.ListToolsResult;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
-import io.modelcontextprotocol.spec.McpClientTransport;
 import io.modelcontextprotocol.spec.McpError;
 
-import java.util.List;
 import java.util.Map;
 
 public final class Main {
@@ -40,6 +38,9 @@ public final class Main {
 
             ListToolsResult tools = client.listTools();
             System.out.println("[2] 发现工具: " + tools.tools().stream().map(tool -> tool.name()).toList());
+            for (var t : tools.tools()) {
+                System.out.println("    - " + t.name() + ": " + t.description());
+            }
 
             CallToolResult result = client.callTool(CallToolRequest.builder("add")
                     .arguments(Map.of("a", 2, "b", 3))
@@ -47,7 +48,7 @@ public final class Main {
             System.out.println("[3] 调用 add(2, 3): " + text(result));
 
             try {
-                client.callTool(CallToolRequest.builder("invalid_tool_name")
+                client.callTool(CallToolRequest.builder("missing_tool")
                         .arguments(Map.of())
                         .build());
             }

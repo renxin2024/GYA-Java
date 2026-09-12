@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation("io.modelcontextprotocol.sdk:mcp:2.0.0")
+    implementation("io.modelcontextprotocol.sdk:mcp:2.0.1")
 }
 
 application {
