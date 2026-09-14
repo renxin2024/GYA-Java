@@ -59,6 +59,9 @@ GYA-Java/
 ├── c11-suspend-protocol/          # 子模块：模型信号 → Runtime 状态迁移 → 调度退出
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c11/Main.java
+├── c12-durable-resume/            # 子模块：checkpoint + 审批绑定 + 幂等恢复
+│   ├── build.gradle.kts
+│   └── src/main/java/cn/renxinblog/c12/Main.java
 ├── c16-sse-agent-stream/          # 子模块：Agent Run 的 SSE 事件流
 │   ├── build.gradle.kts
 │   └── src/main/java/cn/renxinblog/c16/Main.java
@@ -86,6 +89,10 @@ export DEEPSEEK_API_KEY=sk-你的key   # https://platform.deepseek.com 获取
 
 # C11：暂停协议——模型只提决定，Runtime 独占状态迁移（无需 API Key）
 ./gradlew :c11-suspend-protocol:run
+
+# C12：可恢复审批——checkpoint + 审批绑定 + 幂等恢复（无需 API Key）
+./gradlew :c12-durable-resume:test
+./gradlew :c12-durable-resume:run --args="/tmp/c12-java.db /tmp/c12-java-draft.txt start run-1"
 
 # C16：SSE Agent Run 事件流（终端二用 curl -N 订阅）
 ./gradlew :c16-sse-agent-stream:run --args="--once"
