@@ -19,7 +19,9 @@ class MainTest {
     Path out = root.resolve("draft.txt");
     try (Main.Store first = new Main.Store(db, out)) {
       first.start("r1");
-      assertEquals("6720618495b41f95d98585c44fc2361fecd4d5ea401e234f1ebec7a763122e35", first.hash("r1"));
+      // 跨语言契约：两端对同一个 action+args+output 组合算出相同 hash（固定 output 作锚点）
+      assertEquals("2bba1bb36ae552812b4b9e0d730249a3447adfc3ed100e0f4d92e3a8c28e7573",
+          Main.digest(Main.ACTION, Main.CONTENT, "/tmp/c12-draft.txt"));
       first.decide("r1", "approve", first.hash("r1"));
     }
     try (Main.Store second = new Main.Store(db, out)) {
@@ -81,7 +83,7 @@ class MainTest {
       String tampered = "tampered after approval";
       try (PreparedStatement p = store.c.prepareStatement("UPDATE runs SET args=?,proposal_hash=? WHERE run_id=?")) {
         p.setString(1, tampered);
-        p.setString(2, Main.digest(Main.ACTION, tampered));
+        p.setString(2, Main.digest(Main.ACTION, tampered, out.toString()));
         p.setString(3, "r1");
         p.executeUpdate();
       }
@@ -103,6 +105,22 @@ class MainTest {
         p.executeUpdate();
       }
       assertThrows(IllegalArgumentException.class, () -> store.resume("r1"));
+      assertFalse(Files.exists(out));
+    }
+  }
+
+  @Test
+  void postApprovalOutputSwapIsRejected() throws Exception {
+    Path root = Files.createTempDirectory("c12-java-outputswap");
+    Path out = root.resolve("draft.txt");
+    Path other = root.resolve("other.txt");
+    try (Main.Store first = new Main.Store(root.resolve("runs.db"), out)) {
+      first.start("r1");
+      first.decide("r1", "approve", first.hash("r1"));
+    }
+    try (Main.Store second = new Main.Store(root.resolve("runs.db"), other)) {
+      assertThrows(IllegalArgumentException.class, () -> second.resume("r1"));
+      assertFalse(Files.exists(other));
       assertFalse(Files.exists(out));
     }
   }

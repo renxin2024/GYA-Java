@@ -14,7 +14,7 @@ c12-durable-resume/
 ├── build.gradle.kts    # 子模块构建（application 插件 + sqlite-jdbc + JUnit 5 + Java 21 toolchain）
 └── src/
     ├── main/java/cn/renxinblog/c12/Main.java       # Store：checkpoint + 审批绑定 + 幂等恢复 + Trace
-    └── test/java/cn/renxinblog/c12/MainTest.java   # JUnit 测试（9 项）
+    └── test/java/cn/renxinblog/c12/MainTest.java   # JUnit 测试（10 项）
 ```
 
 Gradle wrapper 与 `settings.gradle.kts` 在仓库根目录，本子模块由根工程 `include("c12-durable-resume")` 纳入，不单独带 wrapper。
@@ -38,18 +38,19 @@ Gradle wrapper 与 `settings.gradle.kts` 在仓库根目录，本子模块由根
 
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home  # 或你的 JDK 21 路径
-./gradlew :c12-durable-resume:test        # JUnit 测试（9 项）
+./gradlew :c12-durable-resume:test        # JUnit 测试（10 项）
+# output 统一用 /tmp/c12-draft.txt，与 Python 侧一致，保证两端 proposal_hash 相等
 ./gradlew :c12-durable-resume:run \
-  --args="/tmp/c12-java.db /tmp/c12-java-draft.txt start run-1"
+  --args="/tmp/c12-java.db /tmp/c12-draft.txt start run-1"
 ./gradlew :c12-durable-resume:run \
-  --args="/tmp/c12-java.db /tmp/c12-java-draft.txt show-trace run-1"
+  --args="/tmp/c12-java.db /tmp/c12-draft.txt show-trace run-1"
 # 从 JSON 输出复制 proposal_hash，再执行 approve 和 resume。
 ```
 
 ## 验收语义
 
-- 固定 proposal 的 hash 是 `6720618495b41f95d98585c44fc2361fecd4d5ea401e234f1ebec7a763122e35`（Python / Java 两端一致）。
-- 审批同时保存 `approval_request_id` 和 `approval_hash`；恢复时既比较当前 request ID，也重新计算 action/args hash。批准后替换 pending request 或 proposal 都会被拒绝。
+- proposal 的 hash 覆盖 `action + args + output` 三者。固定 proposal（output 取 `/tmp/c12-draft.txt`）的 hash 是 `2bba1bb36ae552812b4b9e0d730249a3447adfc3ed100e0f4d92e3a8c28e7573`（Python / Java 两端一致）。
+- 审批同时保存 `approval_request_id` 和 `approval_hash`；恢复时既比较当前 request ID，也重新计算 action/args/output 的 hash，并显式比对本次传入的 output 是否等于批准时冻结的 output。批准后替换 pending request、proposal 或 output 都会被拒绝。
 - 正常完成后重复 `resume` 返回 `already_completed`，Trace 留 `action_replayed`。
 - 测试在「文件已创建、COMPLETED 尚未写回」之间注入崩溃；重试发现相同幂等键对应的文件内容已存在时返回 `recovered`，不重写文件。
 - 同一路径已存在但内容不同，恢复返回 `output_conflict`，不覆盖原文件。
