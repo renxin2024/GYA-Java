@@ -1,6 +1,8 @@
 # C06 演示（Java 21）：状态管理——手写状态机版
 
-对应 Python 版 `state_machine.py`（Java 无 LangGraph 等价官方库，本文件实现手写状态机等价版本）。
+> 注：文章 C06 主讲的是「崩溃恢复 + 幂等」（Python 版 `state_management.py`，见 GYA 的 c06-state-management），本篇 Java 实现的是系列早期的「手写状态机 vs StateGraph」对照，两者不是同一套演示。
+
+对应 Python 版 [`langgraph-compare/state_machine.py`](https://github.com/renxin2024/GYA/tree/main/c06-state-management/langgraph-compare)（Java 无 LangGraph 等价官方库，本文件实现手写状态机等价版本）。
 
 核心演示：**图管流程，LLM 管内容**——路由是确定性代码（`next_step` 字段跳转，零 token），LLM 只在"语义理解"和"总结"两个节点被调用。Java 版的"图声明"就是 `NODES` 注册表（nodeName -> Function）。
 
