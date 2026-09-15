@@ -7,7 +7,7 @@ dependencies {
 }
 
 application {
-    mainClass = "cn.renxinblog.c05.Main"
+    mainClass = "cn.renxinblog.c05.ReactAgent"
 }
 
 java {

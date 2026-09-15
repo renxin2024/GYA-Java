@@ -2,12 +2,8 @@ plugins {
     application
 }
 
-dependencies {
-    implementation("com.fasterxml.jackson.core:jackson-databind:2.17.2")
-}
-
 application {
-    mainClass = "cn.renxinblog.c04.Main"
+    mainClass = "cn.renxinblog.c04.ToolRegistry"
 }
 
 java {
